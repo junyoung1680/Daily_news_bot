@@ -1,0 +1,31 @@
+name: Daily News Bot
+
+on:
+  schedule:
+    # 깃허브 서버는 영국 기준(UTC)이라서 한국(KST)보다 9시간 느립니다.
+    # 즉, UTC 기준 00시는 한국 시간 아침 9시입니다.
+    - cron: '0 0 * * *'
+  workflow_dispatch: # 이 줄은 내가 원할 때 수동으로 버튼을 눌러 실행할 수 있게 해줍니다.
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Tools
+        run: |
+          pip install google-generativeai feedparser requests
+
+      - name: Run Python Script
+        env:
+          # 안전 금고에 넣어둔 키를 이 작업에 연결해 줍니다.
+          SLACK_URL: ${{ secrets.SLACK_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python main.py
