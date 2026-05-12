@@ -10,7 +10,7 @@ import re
 import google.generativeai as genai
 
 # ─────────────────────────────────────────
-# 설정값 (오후 2시 테스트용 세팅)
+# 설정값
 # ─────────────────────────────────────────
 MODEL_NAME           = "gemini-3.1-flash-lite"
 MAX_ARTICLES         = 5                          
@@ -30,19 +30,15 @@ model = genai.GenerativeModel(MODEL_NAME)
 now_utc = datetime.datetime.now(datetime.timezone.utc)
 now_kst = now_utc + datetime.timedelta(hours=9)
 
-# 💡 목표 시간 설정 (오늘 오후 2시)
+# 목표 시간 설정
 target_kst = now_kst.replace(hour=SEND_HOUR_KST, minute=SEND_MINUTE_KST, second=0, microsecond=0)
 
-# 현재 시각이 오후 2시 이전이라면, 차이만큼 대기합니다.
 if now_kst < target_kst:
     wait_seconds = (target_kst - now_kst).total_seconds()
     print(f"⏰ 오후 {SEND_HOUR_KST}시 정각 전송을 위해 {int(wait_seconds)}초 대기합니다...")
     time.sleep(wait_seconds)
-    # 대기 후 현재 시간 갱신
     now_utc = datetime.datetime.now(datetime.timezone.utc)
     now_kst = now_utc + datetime.timedelta(hours=9)
-else:
-    print(f"⏰ 이미 {SEND_HOUR_KST}시가 지났거나 정각입니다. 즉시 실행합니다.")
 
 categories = {
     "대출":   "신용대출 OR 가계대출 OR 대환대출 OR 대출규제 OR 카드론 OR 정책대출",
@@ -95,17 +91,36 @@ for display_category, search_keyword in categories.items():
     for idx, art in enumerate(recent_articles):
         articles_text += f"[{idx+1}] 제목: {art['title']}\n    링크: {art['link']}\n    발행일: {art['date']}\n\n"
 
-    prompt = f"금융 수석 애널리스트로서 기사를 선별 요약하세요.\n[목록]\n{articles_text}\n[규칙] 제목 (발행일) / 요약 / 링크 순서로 작성. 강조는 [[ ]] 사용. 별표 금지."
+    # 💡 프롬프트 가독성 강화 (구조화 지시)
+    prompt = f"""
+당신은 금융/산업 전문 수석 애널리스트입니다. 아래 기사 목록 중 시장 파급력이 큰 기사 1~3개를 선정하여 보고서 형식으로 요약하세요.
+
+[후보 기사 목록]
+{articles_text}
+
+[작성 규칙 - 필독]
+1. 각 기사 요약은 아래 양식을 엄격히 따르세요:
+   기사 제목 (발행일)
+   • 정책방향: 핵심 내용 요약 → 파급효과
+   • 주요동향: 관련 기업이나 시장의 움직임 요약
+   • 시장반응: 업계나 소비자의 반응 및 향후 전망
+   🔗 원문 링크: (기사 링크)
+
+2. 강조 규칙: 강조하고 싶은 주체나 숫자는 반드시 [[ ]]로 감싸세요. (예: [[카카오뱅크는]])
+3. 별표(*)는 절대 사용하지 마세요. (코드에서 자동으로 처리합니다)
+"""
 
     for attempt in range(MAX_RETRIES):
         try:
             response = model.generate_content(prompt)
             summary = format_for_slack(response.text.strip())
+            
             blocks = summary.split('\n\n')
             formatted_blocks = []
             for block in blocks:
                 lines = block.strip().split('\n')
                 if lines:
+                    # 첫 줄(제목) 강제 볼드 처리
                     lines[0] = f"*{lines[0].replace('*', '')}*"
                     formatted_blocks.append('\n'.join(lines))
             summary = '\n\n'.join(formatted_blocks)
@@ -121,5 +136,6 @@ for display_category, search_keyword in categories.items():
 if total_summarized == 0:
     final_message = "🤖 현재 새로운 뉴스가 없습니다."
 
+# Slack 전송
 requests.post(slack_url, data=json.dumps({"text": final_message}))
 print("✅ 전송 완료")
