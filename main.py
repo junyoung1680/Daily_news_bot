@@ -18,8 +18,8 @@ HOURS_RANGE          = 24
 INTER_CATEGORY_SLEEP = 10                         
 RETRY_BASE_SLEEP     = 15                         
 MAX_RETRIES          = 3                          
-SEND_HOUR_KST        = 14  # ⬅️ 오후 2시로 변경
-SEND_MINUTE_KST      = 0   # ⬅️ 00분으로 변경
+SEND_HOUR_KST        = 15  
+SEND_MINUTE_KST      = 0   
 
 slack_url       = os.environ.get("SLACK_URL")
 gemini_api_key  = os.environ.get("GEMINI_API_KEY")
@@ -65,7 +65,7 @@ def format_for_slack(text: str) -> str:
     return text
 
 print("🌍 뉴스 수집 시작...")
-final_message = f"🤖 *[2시 테스트] 산업/금융 뉴스 클리핑* ({now_kst.strftime('%m/%d %H:%M')})\n\n"
+final_message = f"🤖 *산업/금융 뉴스 클리핑* ({now_kst.strftime('%m/%d %H:%M')})\n\n"
 total_summarized = 0
 
 for display_category, search_keyword in categories.items():
