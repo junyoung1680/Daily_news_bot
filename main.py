@@ -60,8 +60,8 @@ for display_category, search_keyword in categories.items():
             "date": article_date
         })
         
+    # 💡 [수정] 기사가 아예 없다면 '동향 없음' 텍스트를 남기지 않고 조용히 패스
     if not recent_articles:
-        final_message += f"📌 [{display_category}]\n*최근 24시간 내 주요 동향 없음*\n\n"
         continue
 
     articles_text = ""
@@ -73,20 +73,19 @@ for display_category, search_keyword in categories.items():
     else:
         target_instruction = "당신이 판단하기에 시장 파급력과 중요도가 높은 기사만 선별하세요. 1개에서 최대 3개까지만 골라서 요약하면 됩니다."
 
-    # 💡 [프롬프트 튜닝] 조사를 밖으로 빼고 가독성을 높이는 규칙 적용
+    # 💡 [프롬프트 튜닝] 제미나이가 카테고리명을 중복해서 쓰지 않도록 지침 변경
     prompt = f"""
     당신은 금융, 부동산, 통신 산업 전문 수석 애널리스트입니다. 
     아래 [후보 기사 목록]을 읽고, 선별 기준에 따라 중요한 기사만 뽑아 사용자의 '뉴스 클리핑 양식'에 맞춰 요약하세요.
     
-    [지정된 카테고리]: {display_category}
     [선별 기준]: {target_instruction}
 
     [후보 기사 목록]
     {articles_text}
 
-    [작성 양식 및 규칙] - 선정된 각 기사마다 아래 형식을 100% 똑같이 반복해서 작성하세요.
+    [작성 양식 및 규칙] - 선정된 각 기사마다 아래 형식을 100% 똑같이 반복해서 작성하세요. 여러 기사를 요약할 때는 기사와 기사 사이에 빈 줄을 하나 넣어 구분하세요.
+    ※ 주의: 섹션 이름(예: 📌 [대출])은 절대 출력하지 마세요. 바로 기사 제목부터 시작하세요.
 
-    📌 [{display_category}]
     *통찰력 있는 기사 제목 (발행일)*
     • 핵심단어: 사건의 핵심 내용 기술 → 파급효과나 향후 전망
     • 핵심단어: 주요 기업 동향이나 구체적인 데이터 기술 → 결과
@@ -94,49 +93,9 @@ for display_category, search_keyword in categories.items():
     🔗 원문 링크: (반드시 후보 기사 목록에 있는 링크를 그대로 정확하게 복사하세요.)
 
     [세부 지침]
-    1. 카테고리: 제공된 [{display_category}]를 그대로 대괄호 안에 넣으세요.
-    2. 제목: 전체를 아우르는 통찰력 있는 제목을 짓고, 끝에 발행일을 넣은 뒤 전체를 단일 별표(*)로 감싸 굵은 글씨로 만드세요.
-    3. 불릿(•) 시작: 각 문장은 '정책방향:', '시장반응:', '공급실적:' 처럼 [핵심단어:] 로 시작하세요.
-    4. 🌟강조(가장 중요)🌟: 본문 내용 중 '중요한 주체'나 '핵심 숫자'를 단일 별표(*)로 강조하세요. 
+    1. 제목: 전체를 아우르는 통찰력 있는 제목을 짓고, 끝에 발행일을 넣은 뒤 전체를 단일 별표(*)로 감싸 굵은 글씨로 만드세요.
+    2. 불릿(•) 시작: 각 문장은 '정책방향:', '시장반응:', '공급실적:' 처럼 [핵심단어:] 로 시작하세요.
+    3. 🌟강조(가장 중요)🌟: 본문 내용 중 '중요한 주체'나 '핵심 숫자'를 단일 별표(*)로 강조하세요. 
        [슬랙 굵은글씨 규칙]:
        - 별표와 단어 사이에 절대 공백을 넣지 마세요. (오류: * 카카오 *, 정상: *카카오*)
-       - 조사(은/는/이/가/을/를 등)는 가독성을 위해 절대 별표 안에 넣지 말고 밖으로 빼서 쓰세요. 단, 별표와 띄어쓰기 없이 바로 붙여 써야 합니다. (예: *카카오뱅크*는 중저신용대출 누적 *1.1조원*을 공급)
-    5. 화살표(→): 원인과 결과를 나타낼 때 화살표를 적극 사용하세요.
-    6. 기호 주의: 슬랙 굵은 글씨용 단일 별표(*), 불릿(•), 화살표(→) 외에 다른 마크다운 기호(#, ** 등)는 절대 사용하지 마세요.
-    """
-    
-    max_retries = 3
-    summary = ""
-    for attempt in range(max_retries):
-        try:
-            response = model.generate_content(prompt)
-            summary = response.text
-            break 
-        except Exception as e:
-            if '429' in str(e) or 'quota' in str(e).lower():
-                time.sleep(15 * (attempt + 1))
-            else:
-                break
-    
-    if not summary:
-        summary = f"📌 [{display_category}]\n*(분석 실패)*\n\n"
-
-    final_message += f"{summary}\n\n"
-    total_summarized += 1
-    
-    time.sleep(10)
-
-if total_summarized == 0:
-    final_message = "🤖 현재 새로운 산업/금융 뉴스가 없습니다."
-
-if now_kst.hour == 8:
-    target_kst = now_kst.replace(hour=9, minute=0, second=0, microsecond=0)
-    wait_seconds = (target_kst - now_kst).total_seconds()
-    time.sleep(wait_seconds)
-
-print("\n🚀 슬랙 전송 시작...")
-slack_data = {"text": final_message}
-res = requests.post(slack_url, headers={"Content-Type": "application/json"}, data=json.dumps(slack_data))
-
-if res.status_code == 200:
-    print("✅ 슬랙 전송 완료!")
+       - 조사(은/
