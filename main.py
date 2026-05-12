@@ -5,7 +5,7 @@ import json
 import time
 import datetime
 import urllib.parse
-import re  # 💡 [필수 복구] 정규표현식 모듈
+import re
 import google.generativeai as genai
 
 slack_url = os.environ.get("SLACK_URL")
@@ -82,24 +82,19 @@ for display_category, search_keyword in categories.items():
     [후보 기사 목록]
     {articles_text}
 
-    [작성 양식 및 규칙] - 선정된 각 기사마다 아래 형식을 100% 똑같이 반복해서 작성하세요. 여러 기사를 요약할 때는 기사와 기사 사이에 빈 줄을 하나 넣어 구분하세요.
+    [작성 양식 및 규칙] - 선정된 각 기사마다 아래 형식을 똑같이 반복해서 작성하세요. 여러 기사를 요약할 때는 기사와 기사 사이에 빈 줄을 하나 넣어 구분하세요.
     ※ 주의: 섹션 이름(예: 📌 [대출])은 절대 출력하지 마세요. 바로 기사 제목부터 시작하세요.
 
-    *통찰력 있는 기사 제목 (발행일)*
+    통찰력 있는 기사 제목 (발행일)
     • 정책방향: 핵심 내용 아주 간결하게 작성 → 파급효과
     • 주요동향: 기업 동향이나 핵심 데이터 간결하게 작성 → 결과
     • 시장반응: 시장 영향 간결하게 작성 → 향후 전망
     🔗 원문 링크: (반드시 후보 기사 목록에 있는 링크를 그대로 정확하게 복사하세요.)
 
     [세부 지침]
-    1. 제목: 전체를 아우르는 통찰력 있는 제목을 짓고, 끝에 발행일을 넣은 뒤 전체를 단일 별표(*)로 감싸 굵은 글씨로 만드세요.
-    2. 불릿(•) 시작: 각 문장은 '정책방향:', '시장반응:', '공급실적:' 처럼 [핵심단어:] 로 시작하세요.
-    3. 🌟강조(가장 중요)🌟: 본문 내용 중 '중요한 주체'나 '핵심 숫자'를 단일 별표(*)로 강조하세요. 
-       [슬랙 굵은글씨 규칙]:
-       - 별표와 단어 사이에 절대 공백을 넣지 마세요. (오류: * 카카오 *, 정상: *카카오*)
-       - 조사(은/는/이/가/을/를/의/으로 등)는 가독성을 위해 절대 별표 안에 넣지 말고 밖으로 빼서 쓰세요. 단, 별표와 띄어쓰기 없이 바로 붙여 써야 합니다. (예: *카카오뱅크*는 중저신용대출 누적 *1.1조원*을 공급)
-    4. 화살표(→): 원인과 결과를 나타낼 때 화살표를 적극 사용하세요.
-    5. 기호 주의: 슬랙 굵은 글씨용 단일 별표(*), 불릿(•), 화살표(→) 외에 다른 마크다운 기호(#, ** 등)는 절대 사용하지 마세요.
+    1. 불릿(•) 시작: 각 문장은 '정책방향:', '시장반응:', '공급실적:' 처럼 [핵심단어:] 로 시작하세요.
+    2. 🌟강조🌟: 본문 내용 중 '중요한 주체(기업/기관)'나 '핵심 숫자'를 단일 별표(*)로 감싸세요. 조사는 별표 밖에 쓰세요. (예: *카카오뱅크*는)
+    3. 화살표(→): 원인과 결과를 나타낼 때 화살표를 적극 사용하세요.
     """
     
     max_retries = 3
@@ -107,13 +102,31 @@ for display_category, search_keyword in categories.items():
     for attempt in range(max_retries):
         try:
             response = model.generate_content(prompt)
-            summary = response.text
+            summary = response.text.strip()
             
-            # 💡 [핵심 복구 완료] AI가 출력한 결과물에서 슬랙 인식을 방해하는 조사 문제를 강제 해결
-            # 별표(*)로 닫힌 직후 한글 조사가 바로 이어지면, 그 사이에 '보이지 않는 투명 공백(\u200B)'을 삽입
-            summary = re.sub(r'(\*[^*]+\*)([가-힣]+)', r'\1\u200B\2', summary)
-            
+            if summary and "(분석 실패)" not in summary:
+                # 💡 [해결 1] 제목 강제 볼드 처리: AI의 결과물을 줄 단위로 쪼개서 첫 줄(제목)을 무조건 * *로 감쌈
+                # (여러 기사일 경우 빈 줄로 구분되므로, 빈 줄 다음의 첫 줄도 처리)
+                blocks = summary.split('\n\n')
+                formatted_blocks = []
+                for block in blocks:
+                    lines = block.strip().split('\n')
+                    if lines:
+                        # 기존에 AI가 붙인 별표가 있다면 떼어내고 아주 깔끔하게 다시 씌움
+                        first_line = lines[0].replace('*', '').strip()
+                        lines[0] = f"*{first_line}*"
+                        
+                        formatted_block = '\n'.join(lines)
+                        
+                        # 💡 [해결 2] 슬랙 버그 완벽 차단: *단어* 뒤에 조사가 오면 강제로 '진짜 띄어쓰기' 삽입
+                        # 예: *우리은행*은 -> *우리은행* 은
+                        formatted_block = re.sub(r'(\*[^*]+\*)([가-힣]+)', r'\1 \2', formatted_block)
+                        
+                        formatted_blocks.append(formatted_block)
+                
+                summary = '\n\n'.join(formatted_blocks)
             break 
+            
         except Exception as e:
             if '429' in str(e) or 'quota' in str(e).lower():
                 time.sleep(15 * (attempt + 1))
