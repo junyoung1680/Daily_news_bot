@@ -5,7 +5,6 @@ import json
 import time
 import datetime
 import urllib.parse
-import re
 import google.generativeai as genai
 
 slack_url = os.environ.get("SLACK_URL")
@@ -73,7 +72,6 @@ for display_category, search_keyword in categories.items():
     else:
         target_instruction = "당신이 판단하기에 시장 파급력과 중요도가 높은 기사만 선별하세요. 1개에서 최대 3개까지만 골라서 요약하면 됩니다."
 
-    # 💡 [프롬프트 복구] AI가 가장 잘 이해하는 마크다운(*)으로 복구하여 환각(오류) 방지
     prompt = f"""
     당신은 금융, 부동산, 통신 산업 전문 수석 애널리스트입니다. 
     아래 [후보 기사 목록]을 읽고, 선별 기준에 따라 중요한 기사만 뽑아 요약하세요.
@@ -85,16 +83,20 @@ for display_category, search_keyword in categories.items():
     [작성 양식 및 규칙 - 절대 엄수]
     섹션 이름(예: [대출])은 절대 출력하지 말고 바로 기사 제목부터 시작하세요.
 
-    *통찰력 있는 기사 제목 (발행일)*
+    기사 제목 (발행일)
     • 정책방향: 핵심 내용 아주 간결하게 작성 → 파급효과
     • 주요동향: 기업 동향이나 핵심 데이터 간결하게 작성 → 결과
     • 시장반응: 시장 영향 간결하게 작성 → 향후 전망
     🔗 원문 링크: (반드시 후보 기사 목록에 있는 링크를 그대로 복사하세요.)
 
     [세부 지침]
-    1. 제목: 양 끝에 단일 별표(*)를 붙여 굵은 글씨로 만드세요.
-    2. 강조: 본문에서 강조하고 싶은 주체(기업/기관)나 숫자는 단일 별표(*)로 감싸세요. 조사는 별표 바로 뒤에 붙여 쓰세요. (예: *카카오뱅크*는 중저신용대출 *1.1조원*을 공급)
-    3. 여러 기사를 요약할 때는 기사와 기사 사이에 빈 줄을 하나 넣으세요.
+    1. 강조: 본문에서 강조하고 싶은 주체(기업/기관)나 숫자는 단일 별표(*)로 감싸세요.
+       🚨 [슬랙 마크다운 생존 규칙 - 매우 중요] 🚨
+       슬랙은 '*단어*조사' 형태를 인식하지 못해 마크다운이 깨집니다. 띄어쓰기를 하면 가독성이 떨어지므로, 조사가 붙을 경우 반드시 '조사까지 포함하여' 한 덩어리로 별표로 감싸세요.
+       - ❌ 최악의 예: *카카오뱅크*는, *1.1조원*을, *금융당국*의 (마크다운 깨짐)
+       - ✅ 올바른 예: *카카오뱅크는*, *1.1조원을*, *금융당국의* (정상 작동)
+    2. 기호: 슬랙 볼드용 단일 별표(*) 외에 다른 마크다운 기호(**, # 등)는 절대 사용하지 마세요.
+    3. 간격: 여러 기사를 요약할 때는 기사와 기사 사이에 빈 줄을 하나 넣으세요.
     """
     
     max_retries = 3
@@ -105,14 +107,19 @@ for display_category, search_keyword in categories.items():
             summary = response.text.strip()
             
             if summary and "(분석 실패)" not in summary:
-                # 안전장치: 혹시 AI가 ** 를 썼다면 * 로 일괄 정리
-                summary = summary.replace('**', '*')
+                # 💡 [최종 정공법] 복잡한 정규식 모두 폐기하고, 오직 '제목'만 안전하게 볼드 처리
+                blocks = summary.split('\n\n')
+                formatted_blocks = []
+                for block in blocks:
+                    lines = block.strip().split('\n')
+                    if lines:
+                        # 기존에 붙어있을지 모르는 별표나 마크다운 기호를 깨끗하게 지우고
+                        first_line = lines[0].replace('*', '').replace('#', '').strip()
+                        # 무조건 양 끝에 단일 별표를 씌워 제목을 굵은 글씨로 보장함
+                        lines[0] = f"*{first_line}*"
+                        formatted_blocks.append('\n'.join(lines))
                 
-                # 💡 [최종 해결 로직] 슬랙 마크다운 한계 극복
-                # AI가 "*우리은행*은" 이라고 출력하면, 파이썬이 "*우리은행은*" 으로 강제 변환합니다.
-                # 공백(띄어쓰기) 없이 슬랙에서 100% 굵은 글씨로 적용되게 만드는 유일한 방법입니다.
-                summary = re.sub(r'\*([^*]+)\*([가-힣]+)', r'*\1\2*', summary)
-                
+                summary = '\n\n'.join(formatted_blocks)
             break 
             
         except Exception as e:
