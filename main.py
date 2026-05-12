@@ -15,10 +15,9 @@ import google.generativeai as genai
 MODEL_NAME           = "gemini-3.1-flash-lite"
 MAX_ARTICLES         = 5                          
 HOURS_RANGE          = 24                         
-INTER_CATEGORY_SLEEP = 10                         
-RETRY_BASE_SLEEP     = 15                         
+INTER_CATEGORY_SLEEP = 3  # 빠른 실행을 위해 대기 시간 단축
+RETRY_BASE_SLEEP     = 5                          
 MAX_RETRIES          = 3                          
-SEND_HOUR_KST        = 9                          
 
 slack_url       = os.environ.get("SLACK_URL")
 gemini_api_key  = os.environ.get("GEMINI_API_KEY")
@@ -26,16 +25,9 @@ gemini_api_key  = os.environ.get("GEMINI_API_KEY")
 genai.configure(api_key=gemini_api_key)
 model = genai.GenerativeModel(MODEL_NAME)
 
+# 💡 대기 로직(time.sleep) 완전 삭제: 깃허브가 실행하는 즉시 바로 작업 시작
 now_utc = datetime.datetime.now(datetime.timezone.utc)
 now_kst = now_utc + datetime.timedelta(hours=9)
-
-if now_kst.hour == SEND_HOUR_KST - 1:  
-    target_kst  = now_kst.replace(hour=SEND_HOUR_KST, minute=0, second=0, microsecond=0)
-    wait_seconds = (target_kst - now_kst).total_seconds()
-    print(f"⏰ {SEND_HOUR_KST}시 전송을 위해 {int(wait_seconds)}초 대기 중...")
-    time.sleep(wait_seconds)
-    now_utc = datetime.datetime.now(datetime.timezone.utc)
-    now_kst = now_utc + datetime.timedelta(hours=9)
 
 categories = {
     "대출":   "신용대출 OR 가계대출 OR 대환대출 OR 대출규제 OR 카드론 OR 정책대출",
@@ -48,45 +40,33 @@ categories = {
     "업권":   "금융당국 OR 금융위 OR 금감원 OR 인터넷은행 OR 카카오뱅크 OR 네이버페이 OR 토스 OR 핀테크",
 }
 
-print("🌍 AI 중요도 기반 섹션별 뉴스 수집 시작...")
+print(f"🌍 뉴스 수집 시작 (실행시각: {now_kst.strftime('%H:%M:%S')})")
 
 final_message   = "🤖 *오늘의 산업/금융 심층 뉴스 클리핑* 🤖\n\n"
 total_summarized = 0
 
-# 💡 [핵심] 아예 기초부터 다시 짠 '무결점 슬랙 포맷터'
+# 💡 대표님이 가장 만족하셨던 무결점 슬랙 포맷터 유지
 def format_for_slack(text: str) -> str:
-    # 1. AI가 혹시라도 생성한 잔여 별표(*, **) 마크다운 전량 삭제 (오류 원천 차단)
     text = text.replace('*', '')
-
-    # 2. 괄호 안의 불필요한 공백 제거: [[ 단어 ]] -> [[단어]]
     text = re.sub(r'\[\[\s+(.*?)\s+\]\]', r'[[\1]]', text)
-
-    # 3. 조사가 괄호 밖에 있으면 안으로 강제 편입: [[단어]]조사 -> [[단어조사]]
     text = re.sub(r'\[\[(.*?)\]\]([가-힣]+)', r'[[\1\2]]', text)
-
-    # 4. 슬랙 인식을 위해 [[ ]] 앞뒤로 띄어쓰기(공백) 1칸 강제 확보 
-    # (단, 앞이 줄바꿈이거나 뒤가 마침표/쉼표 등 구두점일 경우는 제외하여 깔끔함 유지)
     text = re.sub(r'([^\s\n\[({])\[\[', r'\1 [[', text)
     text = re.sub(r'\]\]([^\s\n.,?!)\]}])', r']] \1', text)
-
-    # 5. 모든 정리가 완벽하게 끝난 [[ ]] 를 슬랙 공식 볼드체인 * * 로 최종 변환
     text = text.replace('[[', '*').replace(']]', '*')
-
     return text
 
 for display_category, search_keyword in categories.items():
     print(f"\n📂 [{display_category}] 섹션 탐색 및 평가 중...")
 
     encoded_query = urllib.parse.quote(search_keyword)
-    rss_url = (
-        f"https://news.google.com/rss/search"
-        f"?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
-    )
+    rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
 
+    # 💡 무한 로딩 방지용 안전장치 추가 (timeout=10)
     try:
-        feed = feedparser.parse(rss_url)
+        res_rss = requests.get(rss_url, timeout=10)
+        feed = feedparser.parse(res_rss.content)
     except Exception as e:
-        print(f"  ⚠️  RSS 파싱 실패 [{display_category}]: {e}")
+        print(f"  ⚠️ RSS 파싱 실패 [{display_category}]: {e}")
         continue
 
     recent_articles = []
@@ -113,7 +93,7 @@ for display_category, search_keyword in categories.items():
             break
 
     if not recent_articles:
-        print(f"  ℹ️  [{display_category}] 최근 {HOURS_RANGE}시간 내 기사 없음, 건너뜀")
+        print(f"  ℹ️ [{display_category}] 최근 {HOURS_RANGE}시간 내 기사 없음, 건너뜀")
         continue
 
     articles_text = ""
@@ -125,18 +105,10 @@ for display_category, search_keyword in categories.items():
         )
 
     if display_category in ["대출", "부동산"]:
-        target_instruction = (
-            "이 섹션은 매우 중요합니다. "
-            "후보 기사 중 가장 파급력이 큰 3개의 기사를 반드시 선정하여 요약하세요. "
-            "(후보가 3개 이하라면 모두 요약하세요.)"
-        )
+        target_instruction = "이 섹션은 매우 중요합니다. 후보 기사 중 가장 파급력이 큰 3개의 기사를 반드시 선정하여 요약하세요. (후보가 3개 이하라면 모두 요약하세요.)"
     else:
-        target_instruction = (
-            "당신이 판단하기에 시장 파급력과 중요도가 높은 기사만 선별하세요. "
-            "1개에서 최대 3개까지만 골라서 요약하면 됩니다."
-        )
+        target_instruction = "당신이 판단하기에 시장 파급력과 중요도가 높은 기사만 선별하세요. 1개에서 최대 3개까지만 골라서 요약하면 됩니다."
 
-    # 💡 [프롬프트] 별표(*) 사용을 전면 금지하고, 고유 식별자인 대괄호 [[ ]] 사용 강제
     prompt = f"""
 당신은 금융, 부동산, 통신 산업 전문 수석 애널리스트입니다.
 아래 [후보 기사 목록]을 읽고, 선별 기준에 따라 중요한 기사만 뽑아 요약하세요.
@@ -168,16 +140,13 @@ for display_category, search_keyword in categories.items():
             summary  = response.text.strip()
 
             if summary and "(분석 실패)" not in summary:
-                # 💡 파이썬 컴파일러 작동: AI의 텍스트를 슬랙 공식 포맷으로 완벽하게 클렌징 및 변환
                 summary = format_for_slack(summary)
 
-                # 기사 제목 첫 줄 무조건 굵은 글씨(*) 처리
                 blocks = summary.split('\n\n')
                 formatted_blocks = []
                 for block in blocks:
                     lines = block.strip().split('\n')
                     if lines:
-                        # 이미 치환 과정에서 남은 기호가 있다면 깨끗이 제거 후 감싸기
                         first_line  = lines[0].replace('*', '').replace('[', '').replace(']', '').strip()
                         lines[0]    = f"*{first_line}*"
                         formatted_blocks.append('\n'.join(lines))
@@ -207,19 +176,23 @@ for display_category, search_keyword in categories.items():
 if total_summarized == 0:
     final_message = "🤖 현재 새로운 산업/금융 뉴스가 없습니다."
 
-# Slack 메시지 길이 체크 (Webhook 한도: ~40,000자)
 if len(final_message) > 39000:
     final_message = final_message[:39000] + "\n\n⚠️ 메시지가 너무 길어 일부가 잘렸습니다."
 
 print("\n🚀 슬랙 전송 시작...")
 slack_data = {"text": final_message}
-res = requests.post(
-    slack_url,
-    headers={"Content-Type": "application/json"},
-    data=json.dumps(slack_data, ensure_ascii=False),
-)
 
-if res.status_code == 200:
-    print("✅ 슬랙 전송 완료!")
-else:
-    print(f"❌ 슬랙 전송 실패: {res.status_code} / {res.text}")
+# 💡 슬랙 전송 시에도 무한 대기 방지용 timeout 추가
+try:
+    res = requests.post(
+        slack_url,
+        headers={"Content-Type": "application/json"},
+        data=json.dumps(slack_data, ensure_ascii=False),
+        timeout=10
+    )
+    if res.status_code == 200:
+        print("✅ 슬랙 전송 완료!")
+    else:
+        print(f"❌ 슬랙 전송 실패: {res.status_code} / {res.text}")
+except Exception as e:
+    print(f"❌ 슬랙 서버 통신 에러: {e}")
