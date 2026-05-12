@@ -12,7 +12,7 @@ import google.generativeai as genai
 # ─────────────────────────────────────────
 # 설정값 (변경이 필요한 값은 여기서만 수정)
 # ─────────────────────────────────────────
-MODEL_NAME           = "gemini-3.1-flash-lite"   # 수정: 존재하는 모델명으로 변경
+MODEL_NAME           = "gemini-3.1-flash-lite"
 MAX_ARTICLES         = 5                          # 카테고리당 최대 후보 기사 수
 HOURS_RANGE          = 24                         # 수집할 기사의 최대 시간 범위
 INTER_CATEGORY_SLEEP = 10                         # 카테고리 간 대기 시간 (초)
@@ -26,25 +26,17 @@ gemini_api_key  = os.environ.get("GEMINI_API_KEY")
 genai.configure(api_key=gemini_api_key)
 model = genai.GenerativeModel(MODEL_NAME)
 
-# ─────────────────────────────────────────
-# 수정: 9시 전송 대기 로직을 수집 시작 전으로 이동
-# (기존 코드는 수집을 다 끝낸 뒤 sleep → 뉴스가 수집 시점 기준으로 선정됨)
-# ─────────────────────────────────────────
 now_utc = datetime.datetime.now(datetime.timezone.utc)
 now_kst = now_utc + datetime.timedelta(hours=9)
 
-if now_kst.hour == SEND_HOUR_KST - 1:  # 8시에 실행됐다면 9시까지 대기 후 수집 시작
+if now_kst.hour == SEND_HOUR_KST - 1:  
     target_kst  = now_kst.replace(hour=SEND_HOUR_KST, minute=0, second=0, microsecond=0)
     wait_seconds = (target_kst - now_kst).total_seconds()
     print(f"⏰ {SEND_HOUR_KST}시 전송을 위해 {int(wait_seconds)}초 대기 중...")
     time.sleep(wait_seconds)
-    # 대기 후 시각 갱신
     now_utc = datetime.datetime.now(datetime.timezone.utc)
     now_kst = now_utc + datetime.timedelta(hours=9)
 
-# ─────────────────────────────────────────
-# 카테고리 정의
-# ─────────────────────────────────────────
 categories = {
     "대출":   "신용대출 OR 가계대출 OR 대환대출 OR 대출규제 OR 카드론 OR 정책대출",
     "부동산": "주택담보대출 OR 주담대 OR 전세대출 OR 전세자금대출",
@@ -61,27 +53,28 @@ print("🌍 AI 중요도 기반 섹션별 뉴스 수집 시작...")
 final_message   = "🤖 *오늘의 산업/금융 심층 뉴스 클리핑* 🤖\n\n"
 total_summarized = 0
 
-
 def fix_slack_bold(text: str) -> str:
     """
-    Gemini 출력의 마크다운 볼드를 Slack 볼드(*) 형식으로 정규화한다.
-
-    처리 순서:
-      1. **word** → *word*  (정확한 패턴 매칭으로 변환 — replace 미사용)
-      2. 남은 ** 잔재 제거  (짝이 맞지 않는 ** 처리)
-      3. # 헤딩 마크다운 제거
-      4. *word*조사 → *word조사*  (Slack 볼드 조사 병합)
+    AI가 아무리 별표를 엉망으로 뱉어도 완벽한 Slack 마크다운으로 강제 정화하는 함수
     """
-    # 수정 핵심: replace('**','*') 대신 regex로 **word** 패턴만 정확히 변환
-    text = re.sub(r'\*\*([^*\n]+?)\*\*', r'*\1*', text)
-    # 짝이 맞지 않아 남은 ** 잔재 제거
-    text = text.replace('**', '')
-    # 헤딩 기호 제거
-    text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)
-    # *word*조사 → *word조사* 병합
-    text = re.sub(r'\*([^*\n]+?)\*([가-힣]+)', r'*\1\2*', text)
-    return text
+    # 1. 2개 이상의 연속된 별표(**, *** 등)를 모두 단일 별표(*)로 강제 압축
+    text = re.sub(r'\*{2,}', '*', text)
 
+    # 2. *단어*조사 -> *단어조사* 로 강제 병합
+    text = re.sub(r'\*([^*\n]+?)\*([가-힣]+)', r'*\1\2*', text)
+
+    # 3. 별표 안쪽의 불필요한 공백 제거 (* 단어 * -> *단어*)
+    text = re.sub(r'\*\s+([^*\n]+?)\s+\*', r'*\1*', text)
+
+    # 4. 짝이 맞는 정상 볼드체(*...*)만 대피시킨 후, 남은 고아 쓰레기 별표(*) 전량 삭제
+    text = re.sub(r'\*([^*\n]+?)\*', '\x01' + r'\1' + '\x02', text)
+    text = text.replace('*', '')  # 짝 잃은 별표 삭제
+    text = text.replace('\x01', '*').replace('\x02', '*') # 정상 볼드 복원
+
+    # 5. 불필요한 헤딩 마크다운(#) 제거
+    text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)
+
+    return text
 
 for display_category, search_keyword in categories.items():
     print(f"\n📂 [{display_category}] 섹션 탐색 및 평가 중...")
@@ -98,19 +91,14 @@ for display_category, search_keyword in categories.items():
         print(f"  ⚠️  RSS 파싱 실패 [{display_category}]: {e}")
         continue
 
-    # ─────────────────────────────────────
-    # 수정: 24시간 체크를 break보다 먼저 수행
-    # (기존 코드는 오래된 기사가 앞에 있으면 5개를 못 채우고 종료)
-    # ─────────────────────────────────────
     recent_articles = []
     for article in feed.entries:
         if hasattr(article, 'published_parsed') and article.published_parsed:
-            # 수정: time.mktime → calendar.timegm (UTC 기준으로 올바르게 변환)
             pub_ts = calendar.timegm(article.published_parsed)
             pub_dt = datetime.datetime.fromtimestamp(pub_ts, datetime.timezone.utc)
 
             if (now_utc - pub_dt).total_seconds() > HOURS_RANGE * 3600:
-                continue  # 오래된 기사 건너뜀
+                continue
 
             pub_kst      = pub_dt + datetime.timedelta(hours=9)
             article_date = f"{pub_kst.month}/{pub_kst.day}"
@@ -182,7 +170,7 @@ for display_category, search_keyword in categories.items():
             summary  = response.text.strip()
 
             if summary and "(분석 실패)" not in summary:
-                # Slack 볼드 정규화 (핵심 수정 부분)
+                # Slack 볼드 정규화 (새롭게 업그레이드된 함수 적용)
                 summary = fix_slack_bold(summary)
 
                 # 각 기사 블록의 첫 줄(제목)을 강제 볼드 처리
@@ -191,6 +179,7 @@ for display_category, search_keyword in categories.items():
                 for block in blocks:
                     lines = block.strip().split('\n')
                     if lines:
+                        # 제목 줄의 별표를 깨끗이 지우고 무조건 * *로 다시 감쌈
                         first_line  = re.sub(r'^\*+|\*+$', '', lines[0]).strip()
                         lines[0]    = f"*{first_line}*"
                         formatted_blocks.append('\n'.join(lines))
@@ -204,7 +193,6 @@ for display_category, search_keyword in categories.items():
                 print(f"  ⏳ Rate limit, {wait}초 후 재시도 ({attempt+1}/{MAX_RETRIES})...")
                 time.sleep(wait)
             else:
-                # 수정: 에러 내용을 출력하여 디버깅 가능하게
                 print(f"  ❌ Gemini 오류 [{display_category}]: {e}")
                 break
 
