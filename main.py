@@ -108,4 +108,51 @@ for display_category, search_keyword in categories.items():
             summary = response.text.strip()
             
             if summary and "(분석 실패)" not in summary:
-                # 안전장치
+                # 안전장치 1: AI가 실수로 더블 별표(**)를 썼다면 일괄 정리
+                summary = summary.replace('**', '*')
+                
+                blocks = summary.split('\n\n')
+                formatted_blocks = []
+                for block in blocks:
+                    lines = block.strip().split('\n')
+                    if lines:
+                        # 제목 강제 볼드 처리
+                        first_line = lines[0].replace('*', '').replace('#', '').strip()
+                        lines[0] = f"*{first_line}*"
+                        
+                        formatted_block = '\n'.join(lines)
+                        
+                        # 💡 [최종 안전장치 복구] AI가 지시를 어기고 '*단어*조사'로 출력한 것을 찾아 '*단어조사*'로 강제 병합
+                        formatted_block = re.sub(r'\*([^*]+?)\*([가-힣]+)', r'*\1\2*', formatted_block)
+                        
+                        formatted_blocks.append(formatted_block)
+                
+                summary = '\n\n'.join(formatted_blocks)
+            break 
+            
+        except Exception as e:
+            if '429' in str(e) or 'quota' in str(e).lower():
+                time.sleep(15 * (attempt + 1))
+            else:
+                break
+    
+    if summary and "(분석 실패)" not in summary:
+        final_message += f"📌 *[{display_category}]*\n{summary}\n\n"
+        total_summarized += 1
+    
+    time.sleep(10)
+
+if total_summarized == 0:
+    final_message = "🤖 현재 새로운 산업/금융 뉴스가 없습니다."
+
+if now_kst.hour == 8:
+    target_kst = now_kst.replace(hour=9, minute=0, second=0, microsecond=0)
+    wait_seconds = (target_kst - now_kst).total_seconds()
+    time.sleep(wait_seconds)
+
+print("\n🚀 슬랙 전송 시작...")
+slack_data = {"text": final_message}
+res = requests.post(slack_url, headers={"Content-Type": "application/json"}, data=json.dumps(slack_data))
+
+if res.status_code == 200:
+    print("✅ 슬랙 전송 완료!")
