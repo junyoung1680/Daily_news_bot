@@ -98,4 +98,42 @@ for display_category, search_keyword in categories.items():
     3. 🌟강조(가장 중요)🌟: 본문 내용 중 '중요한 주체'나 '핵심 숫자'를 단일 별표(*)로 강조하세요. 
        [슬랙 굵은글씨 규칙]:
        - 별표와 단어 사이에 절대 공백을 넣지 마세요. (오류: * 카카오 *, 정상: *카카오*)
-       - 조사(은/
+       - 조사(은/는/이/가/을/를 등)는 가독성을 위해 절대 별표 안에 넣지 말고 밖으로 빼서 쓰세요. 단, 별표와 띄어쓰기 없이 바로 붙여 써야 합니다. (예: *카카오뱅크*는 중저신용대출 누적 *1.1조원*을 공급)
+    4. 화살표(→): 원인과 결과를 나타낼 때 화살표를 적극 사용하세요.
+    5. 기호 주의: 슬랙 굵은 글씨용 단일 별표(*), 불릿(•), 화살표(→) 외에 다른 마크다운 기호(#, ** 등)는 절대 사용하지 마세요.
+    """
+    
+    max_retries = 3
+    summary = ""
+    for attempt in range(max_retries):
+        try:
+            response = model.generate_content(prompt)
+            summary = response.text
+            break 
+        except Exception as e:
+            if '429' in str(e) or 'quota' in str(e).lower():
+                time.sleep(15 * (attempt + 1))
+            else:
+                break
+    
+    # 💡 [수정] 요약이 성공적으로 나왔을 때만, 파이썬 코드 단에서 머리말을 딱 한 번 붙여줌
+    if summary and "(분석 실패)" not in summary:
+        final_message += f"📌 *[{display_category}]*\n{summary}\n\n"
+        total_summarized += 1
+    
+    time.sleep(10)
+
+if total_summarized == 0:
+    final_message = "🤖 현재 새로운 산업/금융 뉴스가 없습니다."
+
+if now_kst.hour == 8:
+    target_kst = now_kst.replace(hour=9, minute=0, second=0, microsecond=0)
+    wait_seconds = (target_kst - now_kst).total_seconds()
+    time.sleep(wait_seconds)
+
+print("\n🚀 슬랙 전송 시작...")
+slack_data = {"text": final_message}
+res = requests.post(slack_url, headers={"Content-Type": "application/json"}, data=json.dumps(slack_data))
+
+if res.status_code == 200:
+    print("✅ 슬랙 전송 완료!")
