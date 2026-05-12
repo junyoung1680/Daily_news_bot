@@ -18,19 +18,20 @@ model = genai.GenerativeModel('gemini-3.1-flash-lite')
 
 print("🌍 뉴스 수집 중...")
 
-# 💡 [변경] 타겟 키워드를 명확하게 지정하고 한국 구글 뉴스로 설정
+# 💡 사용자가 지정한 타겟 키워드로 검색어 세팅
 keywords = "대출 OR 부동산 OR 계좌 OR 카드 OR 보험 OR 자동차 OR 통신사 OR 알뜰폰 OR 금융업권"
 encoded_query = urllib.parse.quote(keywords)
 rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
 
 feed = feedparser.parse(rss_url)
 
-# 💡 타이틀도 새로운 주제에 맞게 변경
 final_message = "" 
 
 MAX_ARTICLES = 1  
 summarized_count = 0
 now_utc = datetime.datetime.now(datetime.timezone.utc)
+now_kst = now_utc + datetime.timedelta(hours=9)
+today_date = f"{now_kst.month}/{now_kst.day}" # (예: 5/8) 형식 만들기
 
 top_articles = feed.entries[:MAX_ARTICLES]
 
@@ -44,23 +45,28 @@ for article in top_articles:
 
     print(f"\n🔍 분석 중: {title}")
     
-    # 💡 [프롬프트 튜닝] 금융/산업 동향 전문가 페르소나 부여
+    # 💡 [프롬프트 튜닝] 사용자의 실제 수기 클리핑 양식 100% 복제
     prompt = f"""
-    당신은 대출, 부동산, 통신, 자동차 등 국내 주요 산업과 금융 동향을 꿰뚫고 있는 수석 애널리스트입니다. 
-    다음 기사를 원문을 보지 않아도 업계 현황과 동향을 완벽히 파악할 수 있도록 가독성 최고의 '개조식(글머리 기호)' 형태로 요약하세요. 
-    줄글로 길게 풀어쓰는 것을 엄격히 금지합니다.
-
+    당신은 금융, 부동산, 통신 산업 전문 수석 애널리스트입니다. 
+    사용자가 직접 작성하던 최고 수준의 '뉴스 클리핑 양식'을 완벽하게 모방하여 기사를 요약해야 합니다.
+    
     [기사 제목]: {title}
 
-    작성 가이드:
-    1. 제목: 기사 전체를 아우르는 통찰력 있는 국문 제목을 첫 줄에 작성하세요. 제목의 양끝에는 슬랙에서 굵은 글씨로 보이도록 반드시 별표를 딱 하나씩만 붙이세요. (예시: *시중은행 주담대 금리 인상, 부동산 시장 관망세 지속*)
-    2. 소제목 금지: '[분석]', '1. 팩트' 같은 억지스러운 소제목이나 라벨을 절대 쓰지 마세요.
-    3. 본문 구조 (반드시 글머리 기호 '•' 사용):
-       • (해당 산업/업권에서 발생한 핵심 사건이나 현황을 명확하게 1~2문장으로 요약)
-       • (관련된 구체적인 금리, 가격, 점유율 등 주요 데이터나 기업 동향 기술)
-       • (이 이슈가 소비자나 관련 시장에 미치는 파급 효과 및 향후 전망 기술, 이때 인과관계나 흐름을 나타내는 화살표 '→' 적극 활용)
-    4. 기호 주의: 제목 양끝의 단일 별표(*), 본문의 불릿(•), 화살표(→) 외에 다른 마크다운 기호(#, **, -, 등)나 이모지는 절대 사용하지 마세요.
-    5. 출처나 링크 정보는 절대 포함하지 마세요.
+    [작성 양식 및 규칙] - 반드시 아래 형식을 100% 똑같이 지키세요.
+
+    📌 [카테고리명]
+    *통찰력 있는 기사 제목 ({today_date})*
+    • 핵심단어: 사건의 핵심 내용 기술 → 파급효과나 향후 전망
+    • 핵심단어: 주요 기업 동향이나 구체적인 데이터 기술 → 결과
+    • 핵심단어: 시장 영향이나 소비자 변화 기술 → 결과
+
+    [세부 지침]
+    1. 카테고리: '대출, 부동산, 계좌, 카드, 보험, 자동차, 모바일, 업권' 중 기사와 가장 알맞은 1개를 선택해 대괄호 안에 넣으세요.
+    2. 제목: 전체를 아우르는 통찰력 있는 제목을 짓고, 끝에 오늘 날짜({today_date})를 넣은 뒤, 전체를 단일 별표(*)로 감싸 굵은 글씨로 만드세요.
+    3. 불릿(•) 시작: 각 문장의 시작은 '정책방향:', '시장반응:', '공급실적:' 처럼 2~4글자의 [핵심단어:] 로 문을 여세요.
+    4. 🌟강조(가장 중요)🌟: 본문 내용 중 '중요한 주체(기업명, 기관명, 은행명 등)'나 '핵심 숫자(금액, 금리, 비율, 건수 등)'의 양끝에는 반드시 단일 별표(*)를 붙여 시각적으로 강조하세요. (예시: *카카오뱅크* 비금융 데이터 기반 CSS로 중저신용대출 누적 *1.1조원* 공급)
+    5. 화살표(→): 원인과 결과, 흐름을 나타낼 때 화살표를 적극 사용하세요.
+    6. 기호 주의: 슬랙 굵은 글씨용 단일 별표(*), 불릿(•), 화살표(→) 외에 다른 마크다운 기호(#, **, -, 등)나 출처 링크는 절대 넣지 마세요.
     """
     
     max_retries = 3
@@ -79,13 +85,12 @@ for article in top_articles:
     if not summary:
         summary = "(분석 실패)"
 
-    final_message += f"{summary}\n\n━━━━━━━━━━━━━━━━━━━━\n\n"
+    final_message += f"{summary}\n\n\n"
     summarized_count += 1
 
 if summarized_count == 0:
     final_message = "🤖 현재 24시간 이내의 새로운 산업/금융 뉴스가 없습니다."
 
-now_kst = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=9)
 if now_kst.hour == 8:
     target_kst = now_kst.replace(hour=9, minute=0, second=0, microsecond=0)
     wait_seconds = (target_kst - now_kst).total_seconds()
