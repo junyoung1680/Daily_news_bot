@@ -19,7 +19,8 @@ print("🌍 뉴스 수집 중...")
 rss_url = "https://news.google.com/rss/search?q=technology+source:reuters&hl=en-US&gl=US&ceid=US:en"
 feed = feedparser.parse(rss_url)
 
-final_message = "🤖 *오늘의 로이터 심층 뉴스 브리핑 (가독성 테스트)* 🤖\n\n"
+# 💡 고정 타이틀 제거 (빈 문자열로 시작)
+final_message = "" 
 
 MAX_ARTICLES = 1  
 summarized_count = 0
@@ -37,7 +38,6 @@ for article in top_articles:
 
     print(f"\n🔍 분석 중: {title}")
     
-    # 💡 [프롬프트 튜닝] 슬랙 전용 볼드체 문법(*) 적용 및 구조 단순화
     prompt = f"""
     당신은 바쁜 실무자를 위한 IT 뉴스 브리핑 전문가입니다. 
     다음 기사를 원문을 보지 않아도 완벽히 이해할 수 있도록 가독성 최고의 '개조식(글머리 기호)' 형태로 요약하세요. 
