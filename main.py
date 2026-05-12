@@ -10,15 +10,15 @@ import re
 import google.generativeai as genai
 
 # ─────────────────────────────────────────
-# 설정값 (변경이 필요한 값은 여기서만 수정)
+# 설정값
 # ─────────────────────────────────────────
 MODEL_NAME           = "gemini-3.1-flash-lite"
-MAX_ARTICLES         = 5                          # 카테고리당 최대 후보 기사 수
-HOURS_RANGE          = 24                         # 수집할 기사의 최대 시간 범위
-INTER_CATEGORY_SLEEP = 10                         # 카테고리 간 대기 시간 (초)
-RETRY_BASE_SLEEP     = 15                         # 429 에러 시 기본 대기 시간 (초)
-MAX_RETRIES          = 3                          # Gemini API 최대 재시도 횟수
-SEND_HOUR_KST        = 9                          # Slack 전송 목표 시각 (KST)
+MAX_ARTICLES         = 5                          
+HOURS_RANGE          = 24                         
+INTER_CATEGORY_SLEEP = 10                         
+RETRY_BASE_SLEEP     = 15                         
+MAX_RETRIES          = 3                          
+SEND_HOUR_KST        = 9                          
 
 slack_url       = os.environ.get("SLACK_URL")
 gemini_api_key  = os.environ.get("GEMINI_API_KEY")
@@ -53,26 +53,24 @@ print("🌍 AI 중요도 기반 섹션별 뉴스 수집 시작...")
 final_message   = "🤖 *오늘의 산업/금융 심층 뉴스 클리핑* 🤖\n\n"
 total_summarized = 0
 
-def fix_slack_bold(text: str) -> str:
-    """
-    AI가 아무리 별표를 엉망으로 뱉어도 완벽한 Slack 마크다운으로 강제 정화하는 함수
-    """
-    # 1. 2개 이상의 연속된 별표(**, *** 등)를 모두 단일 별표(*)로 강제 압축
-    text = re.sub(r'\*{2,}', '*', text)
+# 💡 [핵심] 아예 기초부터 다시 짠 '무결점 슬랙 포맷터'
+def format_for_slack(text: str) -> str:
+    # 1. AI가 혹시라도 생성한 잔여 별표(*, **) 마크다운 전량 삭제 (오류 원천 차단)
+    text = text.replace('*', '')
 
-    # 2. *단어*조사 -> *단어조사* 로 강제 병합
-    text = re.sub(r'\*([^*\n]+?)\*([가-힣]+)', r'*\1\2*', text)
+    # 2. 괄호 안의 불필요한 공백 제거: [[ 단어 ]] -> [[단어]]
+    text = re.sub(r'\[\[\s+(.*?)\s+\]\]', r'[[\1]]', text)
 
-    # 3. 별표 안쪽의 불필요한 공백 제거 (* 단어 * -> *단어*)
-    text = re.sub(r'\*\s+([^*\n]+?)\s+\*', r'*\1*', text)
+    # 3. 조사가 괄호 밖에 있으면 안으로 강제 편입: [[단어]]조사 -> [[단어조사]]
+    text = re.sub(r'\[\[(.*?)\]\]([가-힣]+)', r'[[\1\2]]', text)
 
-    # 4. 짝이 맞는 정상 볼드체(*...*)만 대피시킨 후, 남은 고아 쓰레기 별표(*) 전량 삭제
-    text = re.sub(r'\*([^*\n]+?)\*', '\x01' + r'\1' + '\x02', text)
-    text = text.replace('*', '')  # 짝 잃은 별표 삭제
-    text = text.replace('\x01', '*').replace('\x02', '*') # 정상 볼드 복원
+    # 4. 슬랙 인식을 위해 [[ ]] 앞뒤로 띄어쓰기(공백) 1칸 강제 확보 
+    # (단, 앞이 줄바꿈이거나 뒤가 마침표/쉼표 등 구두점일 경우는 제외하여 깔끔함 유지)
+    text = re.sub(r'([^\s\n\[({])\[\[', r'\1 [[', text)
+    text = re.sub(r'\]\]([^\s\n.,?!)\]}])', r']] \1', text)
 
-    # 5. 불필요한 헤딩 마크다운(#) 제거
-    text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)
+    # 5. 모든 정리가 완벽하게 끝난 [[ ]] 를 슬랙 공식 볼드체인 * * 로 최종 변환
+    text = text.replace('[[', '*').replace(']]', '*')
 
     return text
 
@@ -138,6 +136,7 @@ for display_category, search_keyword in categories.items():
             "1개에서 최대 3개까지만 골라서 요약하면 됩니다."
         )
 
+    # 💡 [프롬프트] 별표(*) 사용을 전면 금지하고, 고유 식별자인 대괄호 [[ ]] 사용 강제
     prompt = f"""
 당신은 금융, 부동산, 통신 산업 전문 수석 애널리스트입니다.
 아래 [후보 기사 목록]을 읽고, 선별 기준에 따라 중요한 기사만 뽑아 요약하세요.
@@ -155,12 +154,11 @@ for display_category, search_keyword in categories.items():
 • 시장반응: 시장 영향 간결하게 작성 → 향후 전망
 🔗 원문 링크: (반드시 후보 기사 목록에 있는 링크를 그대로 복사하세요.)
 
-[강조 규칙]
-- 강조하고 싶은 주체(기업/기관)나 숫자는 단일 별표(*)로 감싸되, 조사까지 포함하여 한 덩어리로 감싸세요.
-  ✅ 올바른 예: *카카오뱅크는*, *1.1조원을*, *금융당국의*
-  ❌ 잘못된 예: *카카오뱅크*는, *1.1조원*을 (조사가 볼드 밖으로 나오면 Slack에서 깨짐)
-- 단일 별표(*)만 사용하고, 이중 별표(**), 헤딩(#) 등 다른 마크다운은 절대 쓰지 마세요.
-- 여러 기사를 요약할 때는 기사 사이에 빈 줄을 하나 넣으세요.
+[강조 규칙 - 반드시 지킬 것]
+1. 본문 내용 중 강조하고 싶은 주체(기업/기관)나 핵심 숫자는 반드시 대괄호 두 개 [[ ]] 로 감싸세요.
+  (예: [[카카오뱅크]], [[1.1조원]])
+2. 마크다운 별표(*)나 기타 기호는 절대 사용하지 마세요. 오직 [[ ]] 만 사용해야 합니다.
+3. 여러 기사를 요약할 때는 기사 사이에 빈 줄을 하나 넣으세요.
 """
 
     summary = ""
@@ -170,17 +168,17 @@ for display_category, search_keyword in categories.items():
             summary  = response.text.strip()
 
             if summary and "(분석 실패)" not in summary:
-                # Slack 볼드 정규화 (새롭게 업그레이드된 함수 적용)
-                summary = fix_slack_bold(summary)
+                # 💡 파이썬 컴파일러 작동: AI의 텍스트를 슬랙 공식 포맷으로 완벽하게 클렌징 및 변환
+                summary = format_for_slack(summary)
 
-                # 각 기사 블록의 첫 줄(제목)을 강제 볼드 처리
+                # 기사 제목 첫 줄 무조건 굵은 글씨(*) 처리
                 blocks = summary.split('\n\n')
                 formatted_blocks = []
                 for block in blocks:
                     lines = block.strip().split('\n')
                     if lines:
-                        # 제목 줄의 별표를 깨끗이 지우고 무조건 * *로 다시 감쌈
-                        first_line  = re.sub(r'^\*+|\*+$', '', lines[0]).strip()
+                        # 이미 치환 과정에서 남은 기호가 있다면 깨끗이 제거 후 감싸기
+                        first_line  = lines[0].replace('*', '').replace('[', '').replace(']', '').strip()
                         lines[0]    = f"*{first_line}*"
                         formatted_blocks.append('\n'.join(lines))
 
@@ -224,4 +222,4 @@ res = requests.post(
 if res.status_code == 200:
     print("✅ 슬랙 전송 완료!")
 else:
-    print(f"❌ 슬랙 전송 실패: {res.status_code} / {res.text}")
+    print(f"❌ 슬랙 전송 실패: {res.status_code} / {res.text
