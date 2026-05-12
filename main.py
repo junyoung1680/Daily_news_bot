@@ -10,7 +10,7 @@ import re
 import google.generativeai as genai
 
 # ─────────────────────────────────────────
-# 설정값 (테스트를 위해 13시 30분으로 세팅)
+# 설정값 (오후 2시 테스트용 세팅)
 # ─────────────────────────────────────────
 MODEL_NAME           = "gemini-3.1-flash-lite"
 MAX_ARTICLES         = 5                          
@@ -18,8 +18,8 @@ HOURS_RANGE          = 24
 INTER_CATEGORY_SLEEP = 10                         
 RETRY_BASE_SLEEP     = 15                         
 MAX_RETRIES          = 3                          
-SEND_HOUR_KST        = 13  # ⬅️ 테스트를 위해 13시로 변경
-SEND_MINUTE_KST      = 30  # ⬅️ 테스트를 위해 30분으로 설정
+SEND_HOUR_KST        = 14  # ⬅️ 오후 2시로 변경
+SEND_MINUTE_KST      = 0   # ⬅️ 00분으로 변경
 
 slack_url       = os.environ.get("SLACK_URL")
 gemini_api_key  = os.environ.get("GEMINI_API_KEY")
@@ -30,17 +30,19 @@ model = genai.GenerativeModel(MODEL_NAME)
 now_utc = datetime.datetime.now(datetime.timezone.utc)
 now_kst = now_utc + datetime.timedelta(hours=9)
 
-# 💡 테스트용 정밀 대기 로직
+# 💡 목표 시간 설정 (오늘 오후 2시)
 target_kst = now_kst.replace(hour=SEND_HOUR_KST, minute=SEND_MINUTE_KST, second=0, microsecond=0)
 
-# 만약 현재 시간이 설정된 시간보다 이전이라면, 그 시간까지 대기합니다.
+# 현재 시각이 오후 2시 이전이라면, 차이만큼 대기합니다.
 if now_kst < target_kst:
     wait_seconds = (target_kst - now_kst).total_seconds()
-    print(f"⏰ {SEND_HOUR_KST}:{SEND_MINUTE_KST} 전송을 위해 {int(wait_seconds)}초 대기 중...")
+    print(f"⏰ 오후 {SEND_HOUR_KST}시 정각 전송을 위해 {int(wait_seconds)}초 대기합니다...")
     time.sleep(wait_seconds)
     # 대기 후 현재 시간 갱신
     now_utc = datetime.datetime.now(datetime.timezone.utc)
     now_kst = now_utc + datetime.timedelta(hours=9)
+else:
+    print(f"⏰ 이미 {SEND_HOUR_KST}시가 지났거나 정각입니다. 즉시 실행합니다.")
 
 categories = {
     "대출":   "신용대출 OR 가계대출 OR 대환대출 OR 대출규제 OR 카드론 OR 정책대출",
@@ -62,9 +64,8 @@ def format_for_slack(text: str) -> str:
     text = text.replace('[[', '*').replace(']]', '*')
     return text
 
-print("🌍 뉴스 수집 및 분석 시작...")
-
-final_message   = "🤖 *[테스트] 오늘의 산업/금융 심층 뉴스 클리핑* 🤖\n\n"
+print("🌍 뉴스 수집 시작...")
+final_message = f"🤖 *[2시 테스트] 산업/금융 뉴스 클리핑* ({now_kst.strftime('%m/%d %H:%M')})\n\n"
 total_summarized = 0
 
 for display_category, search_keyword in categories.items():
@@ -94,26 +95,12 @@ for display_category, search_keyword in categories.items():
     for idx, art in enumerate(recent_articles):
         articles_text += f"[{idx+1}] 제목: {art['title']}\n    링크: {art['link']}\n    발행일: {art['date']}\n\n"
 
-    target_instruction = "가장 중요한 1~3개의 기사를 선정하여 요약하세요."
-    prompt = f"""
-당신은 금융/산업 수석 애널리스트입니다. 아래 기사 중 중요한 것을 선별해 요약하세요.
-[선별 기준]: {target_instruction}
-[후보 기사 목록]
-{articles_text}
-[작성 양식]
-기사 제목 (발행일)
-• 핵심내용: 간결하게 작성 → 파급효과
-🔗 원문 링크: (링크 복사)
-
-[주의] 강조하고 싶은 단어는 반드시 [[ ]] 로 감싸세요. (예: [[카카오뱅크]]) 별표(*)는 절대 쓰지 마세요.
-"""
+    prompt = f"금융 수석 애널리스트로서 기사를 선별 요약하세요.\n[목록]\n{articles_text}\n[규칙] 제목 (발행일) / 요약 / 링크 순서로 작성. 강조는 [[ ]] 사용. 별표 금지."
 
     for attempt in range(MAX_RETRIES):
         try:
             response = model.generate_content(prompt)
-            summary  = format_for_slack(response.text.strip())
-            
-            # 제목 굵게 처리
+            summary = format_for_slack(response.text.strip())
             blocks = summary.split('\n\n')
             formatted_blocks = []
             for block in blocks:
@@ -135,4 +122,4 @@ if total_summarized == 0:
     final_message = "🤖 현재 새로운 뉴스가 없습니다."
 
 requests.post(slack_url, data=json.dumps({"text": final_message}))
-print("✅ 완료")
+print("✅ 전송 완료")
