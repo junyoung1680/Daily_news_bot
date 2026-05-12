@@ -11,7 +11,7 @@ gemini_api_key = os.environ.get("GEMINI_API_KEY")
 
 genai.configure(api_key=gemini_api_key)
 # 💡 2. 일일 1,500회 / 분당 15회 무료인 가장 안정적인 모델로 확정
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-2.5-flash')
 
 print("🌍 뉴스 수집 중...")
 rss_url = "https://news.google.com/rss/search?q=technology+source:reuters&hl=en-US&gl=US&ceid=US:en"
