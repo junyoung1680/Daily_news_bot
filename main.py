@@ -5,6 +5,7 @@ import json
 import time
 import datetime
 import urllib.parse
+import re
 import google.generativeai as genai
 
 slack_url = os.environ.get("SLACK_URL")
@@ -107,44 +108,4 @@ for display_category, search_keyword in categories.items():
             summary = response.text.strip()
             
             if summary and "(분석 실패)" not in summary:
-                # 💡 [최종 정공법] 복잡한 정규식 모두 폐기하고, 오직 '제목'만 안전하게 볼드 처리
-                blocks = summary.split('\n\n')
-                formatted_blocks = []
-                for block in blocks:
-                    lines = block.strip().split('\n')
-                    if lines:
-                        # 기존에 붙어있을지 모르는 별표나 마크다운 기호를 깨끗하게 지우고
-                        first_line = lines[0].replace('*', '').replace('#', '').strip()
-                        # 무조건 양 끝에 단일 별표를 씌워 제목을 굵은 글씨로 보장함
-                        lines[0] = f"*{first_line}*"
-                        formatted_blocks.append('\n'.join(lines))
-                
-                summary = '\n\n'.join(formatted_blocks)
-            break 
-            
-        except Exception as e:
-            if '429' in str(e) or 'quota' in str(e).lower():
-                time.sleep(15 * (attempt + 1))
-            else:
-                break
-    
-    if summary and "(분석 실패)" not in summary:
-        final_message += f"📌 *[{display_category}]*\n{summary}\n\n"
-        total_summarized += 1
-    
-    time.sleep(10)
-
-if total_summarized == 0:
-    final_message = "🤖 현재 새로운 산업/금융 뉴스가 없습니다."
-
-if now_kst.hour == 8:
-    target_kst = now_kst.replace(hour=9, minute=0, second=0, microsecond=0)
-    wait_seconds = (target_kst - now_kst).total_seconds()
-    time.sleep(wait_seconds)
-
-print("\n🚀 슬랙 전송 시작...")
-slack_data = {"text": final_message}
-res = requests.post(slack_url, headers={"Content-Type": "application/json"}, data=json.dumps(slack_data))
-
-if res.status_code == 200:
-    print("✅ 슬랙 전송 완료!")
+                # 안전장치
