@@ -10,16 +10,13 @@ import re
 import google.generativeai as genai
 
 # ─────────────────────────────────────────
-# 설정값
+# 설정값 (속도와 안정성 최적화)
 # ─────────────────────────────────────────
 MODEL_NAME           = "gemini-3.1-flash-lite"
 MAX_ARTICLES         = 5                          
 HOURS_RANGE          = 24                         
-INTER_CATEGORY_SLEEP = 10                         
-RETRY_BASE_SLEEP     = 15                         
-MAX_RETRIES          = 3                          
-SEND_HOUR_KST        = 15  
-SEND_MINUTE_KST      = 0   
+MAX_RETRIES          = 2  # 무한 대기 방지를 위해 재시도 2회로 단축
+RETRY_BASE_SLEEP     = 5  # 대기 시간 5초로 대폭 단축
 
 slack_url       = os.environ.get("SLACK_URL")
 gemini_api_key  = os.environ.get("GEMINI_API_KEY")
@@ -29,16 +26,6 @@ model = genai.GenerativeModel(MODEL_NAME)
 
 now_utc = datetime.datetime.now(datetime.timezone.utc)
 now_kst = now_utc + datetime.timedelta(hours=9)
-
-# 목표 시간 설정
-target_kst = now_kst.replace(hour=SEND_HOUR_KST, minute=SEND_MINUTE_KST, second=0, microsecond=0)
-
-if now_kst < target_kst:
-    wait_seconds = (target_kst - now_kst).total_seconds()
-    print(f"⏰ 오후 {SEND_HOUR_KST}시 정각 전송을 위해 {int(wait_seconds)}초 대기합니다...")
-    time.sleep(wait_seconds)
-    now_utc = datetime.datetime.now(datetime.timezone.utc)
-    now_kst = now_utc + datetime.timedelta(hours=9)
 
 categories = {
     "대출":   "신용대출 OR 가계대출 OR 대환대출 OR 대출규제 OR 카드론 OR 정책대출",
@@ -60,17 +47,22 @@ def format_for_slack(text: str) -> str:
     text = text.replace('[[', '*').replace(']]', '*')
     return text
 
-print("🌍 뉴스 수집 시작...")
+print(f"🚀 뉴스 수집 시작 (실행시각: {now_kst.strftime('%H:%M:%S')})")
 final_message = f"🤖 *산업/금융 뉴스 클리핑* ({now_kst.strftime('%m/%d %H:%M')})\n\n"
 total_summarized = 0
 
 for display_category, search_keyword in categories.items():
+    print(f"\n📂 [{display_category}] 섹션 처리 중...")
     encoded_query = urllib.parse.quote(search_keyword)
     rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
 
+    # 안전장치 1: RSS 호출 시 최대 10초만 기다리고 포기 (무한 대기 방지)
     try:
-        feed = feedparser.parse(rss_url)
-    except: continue
+        response = requests.get(rss_url, timeout=10)
+        feed = feedparser.parse(response.content)
+    except Exception as e:
+        print(f"  ⚠️ RSS 호출 실패 (통신 지연): {e}")
+        continue
 
     recent_articles = []
     for article in feed.entries:
@@ -85,15 +77,16 @@ for display_category, search_keyword in categories.items():
         recent_articles.append({"title": article.title, "link": article.link, "date": date_str})
         if len(recent_articles) >= MAX_ARTICLES: break
 
-    if not recent_articles: continue
+    if not recent_articles: 
+        print("  ℹ️ 최근 24시간 내 유효한 기사 없음.")
+        continue
 
     articles_text = ""
     for idx, art in enumerate(recent_articles):
         articles_text += f"[{idx+1}] 제목: {art['title']}\n    링크: {art['link']}\n    발행일: {art['date']}\n\n"
 
-    # 💡 프롬프트 가독성 강화 (구조화 지시)
     prompt = f"""
-당신은 금융/산업 전문 수석 애널리스트입니다. 아래 기사 목록 중 시장 파급력이 큰 기사 1~3개를 선정하여 보고서 형식으로 요약하세요.
+당신은 금융/산업 전문 수석 애널리스트입니다. 아래 기사 목록 중 가장 중요한 기사 1~3개를 선정하여 요약하세요.
 
 [후보 기사 목록]
 {articles_text}
@@ -110,6 +103,8 @@ for display_category, search_keyword in categories.items():
 3. 별표(*)는 절대 사용하지 마세요. (코드에서 자동으로 처리합니다)
 """
 
+    summary = ""
+    print("  ⏳ AI 요약 생성 요청 중...")
     for attempt in range(MAX_RETRIES):
         try:
             response = model.generate_content(prompt)
@@ -120,22 +115,36 @@ for display_category, search_keyword in categories.items():
             for block in blocks:
                 lines = block.strip().split('\n')
                 if lines:
-                    # 첫 줄(제목) 강제 볼드 처리
                     lines[0] = f"*{lines[0].replace('*', '')}*"
                     formatted_blocks.append('\n'.join(lines))
             summary = '\n\n'.join(formatted_blocks)
+            print("  ✅ AI 요약 완료!")
             break
-        except:
+        except Exception as e:
+            # 안전장치 2: 어떤 에러 때문에 막히는지 실시간 출력
+            print(f"  ⚠️ AI 호출 에러 ({attempt+1}/{MAX_RETRIES}): {e}")
+            if "finish_reason" in str(e) or "safety" in str(e).lower():
+                print("  🚫 보안/검열 필터에 걸려 요약 불가. 다음 섹션으로 넘어갑니다.")
+                break # 안전 필터에 걸리면 재시도해도 안 되므로 즉시 중단
             time.sleep(RETRY_BASE_SLEEP)
             summary = ""
 
     if summary:
         final_message += f"📌 *[{display_category}]*\n{summary}\n\n"
         total_summarized += 1
+        
+    time.sleep(2) # API 호출 제한 방지를 위한 짧은 휴식
 
 if total_summarized == 0:
     final_message = "🤖 현재 새로운 뉴스가 없습니다."
 
-# Slack 전송
-requests.post(slack_url, data=json.dumps({"text": final_message}))
-print("✅ 전송 완료")
+# 안전장치 3: 슬랙 전송 시 무한 대기 방지
+print("\n🚀 슬랙 전송 시도 중...")
+try:
+    res = requests.post(slack_url, data=json.dumps({"text": final_message}), timeout=10)
+    if res.status_code == 200:
+        print("✅ 전송 완벽 성공!")
+    else:
+        print(f"❌ 슬랙 전송 실패 (상태 코드: {res.status_code})")
+except Exception as e:
+    print(f"❌ 슬랙 서버 통신 에러: {e}")
