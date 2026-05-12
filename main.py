@@ -12,7 +12,7 @@ gemini_api_key = os.environ.get("GEMINI_API_KEY")
 genai.configure(api_key=gemini_api_key)
 model = genai.GenerativeModel('gemini-3.1-flash-lite')
 
-# 💡 [조건 3 & 4] 과거 요약 기록 불러오기 (기억력)
+# 💡 [보완] URL 대신 절대 변하지 않는 '기사 제목(Title)'으로 중복 검사
 HISTORY_FILE = "history.json"
 if os.path.exists(HISTORY_FILE):
     with open(HISTORY_FILE, "r", encoding="utf-8") as f:
@@ -26,31 +26,32 @@ feed = feedparser.parse(rss_url)
 
 final_message = "🤖 *오늘의 로이터 심층 뉴스 브리핑* 🤖\n\n"
 
-# 테스트용: 몇 개의 '새로운' 기사를 요약할 것인지 설정
 MAX_ARTICLES = 1  
 summarized_count = 0
 now_utc = datetime.datetime.now(datetime.timezone.utc)
 
-for article in feed.entries:
-    if summarized_count >= MAX_ARTICLES:
-        break
-        
+# 💡 [보완] 루프가 무한히 다음 기사를 찾는 것을 막기 위해, 최상위 N개만 딱 잘라서 검사
+top_articles = feed.entries[:MAX_ARTICLES]
+
+for article in top_articles:
     title = article.title
     link = article.link
     
-    # 💡 [조건 4] 이미 요약했던 기사면 패스
-    if link in history:
+    # [조건 4] 기억장치에 있는 제목이면 완전히 패스
+    if title in history:
+        print(f"🔄 이미 발송된 기사입니다 (패스): {title}")
         continue
         
-    # 💡 [조건 2] 24시간이 지난 오래된 기사면 패스
+    # [조건 2] 24시간이 지난 기사면 패스
     if hasattr(article, 'published_parsed'):
         pub_dt = datetime.datetime.fromtimestamp(time.mktime(article.published_parsed), datetime.timezone.utc)
         if (now_utc - pub_dt).total_seconds() > 24 * 3600:
+            print(f"⏰ 24시간이 지난 기사입니다 (패스): {title}")
             continue
 
     print(f"\n🔍 새로운 기사 발견: {title}")
     
-    # 💡 [조건 5] 원문을 대체할 수준의 상세 요약 프롬프트
+    # [조건 5] 심층 요약 프롬프트
     prompt = f"""
     당신은 IT 전문 수석 기자입니다. 다음 영문 기사 제목을 바탕으로, 독자가 원문을 전혀 읽지 않아도 이 사안을 완벽하게 이해할 수 있도록 상세한 심층 브리핑을 작성해 주세요.
     
@@ -84,36 +85,28 @@ for article in feed.entries:
 
     final_message += f"📰 *{title}*\n\n{summary}\n\n🔗 원문 링크: {link}\n\n━━━━━━━━━━━━━━━━━━━━\n\n"
     
-    # 요약 성공한 기사를 기억 장치에 저장
-    history.add(link)
+    # 요약에 성공한 '제목'을 기억 장치에 추가
+    history.add(title)
     summarized_count += 1
-    
-    if summarized_count < MAX_ARTICLES:
-        time.sleep(10)
 
-# 만약 보낼 새로운 기사가 없다면 종료
+# 중복/시간 초과로 요약된 기사가 하나도 없을 경우의 메시지
 if summarized_count == 0:
     print("오늘은 전송할 새로운 기사가 없습니다.")
     final_message = "🤖 오늘은 24시간 이내에 올라온 새로운 로이터 기술 뉴스가 없습니다."
 
-# 💡 [조건 4] 갱신된 기억 장치(history)를 파일로 저장
+# 갱신된 기억장치 저장
 with open(HISTORY_FILE, "w", encoding="utf-8") as f:
     json.dump(list(history), f, ensure_ascii=False, indent=2)
 
-# 💡 [조건 1] 9시 정각 발송을 위한 대기 로직 (한국 시간 기준)
+# 💡 [보완] 9시 정각을 위한 정확한 타이머 수면 로직
 now_kst = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=9)
-
-# 현재 시간이 아침 8시 대라면, 9시가 될 때까지 코드를 멈추고 기다림
 if now_kst.hour == 8:
-    print("⏳ 기사 요약 완료! 아침 9시 정각 발송을 위해 대기 중입니다...")
-    while True:
-        check_kst = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=9)
-        if check_kst.hour >= 9:
-            break
-        time.sleep(5) # 5초마다 시간 확인
+    target_kst = now_kst.replace(hour=9, minute=0, second=0, microsecond=0)
+    wait_seconds = (target_kst - now_kst).total_seconds()
+    print(f"⏳ 9시 정각 발송을 위해 {int(wait_seconds)}초 대기합니다...")
+    time.sleep(wait_seconds)
 
-# 4. 슬랙으로 최종 전송
-print("\n🚀 9시 정각! 슬랙 전송 시작...")
+print("\n🚀 슬랙 전송 시작...")
 slack_data = {"text": final_message}
 res = requests.post(slack_url, headers={"Content-Type": "application/json"}, data=json.dumps(slack_data))
 
