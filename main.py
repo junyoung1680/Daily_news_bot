@@ -10,23 +10,24 @@ slack_url = os.environ.get("SLACK_URL")
 gemini_api_key = os.environ.get("GEMINI_API_KEY")
 
 genai.configure(api_key=gemini_api_key)
-
-# 💡 2. 가장 최신 가성비 모델인 3.1 Flash-Lite 적용 (정확한 API 명칭 사용)
 model = genai.GenerativeModel('gemini-3.1-flash-lite')
 
 print("🌍 뉴스 수집 중...")
 rss_url = "https://news.google.com/rss/search?q=technology+source:reuters&hl=en-US&gl=US&ceid=US:en"
 feed = feedparser.parse(rss_url)
 
-final_message = "🤖 *오늘의 로이터 기술 뉴스 요약 (Gemini 3.1 Flash-Lite)* 🤖\n\n"
+final_message = "🤖 *오늘의 로이터 기술 뉴스 요약 (테스트 모드)* 🤖\n\n"
 
-# 3. 뉴스 5개 요약 진행
-for i in range(5):
+# 💡 2. 요약할 기사 개수 설정 (테스트가 끝나면 이 숫자만 5로 바꾸면 돼!)
+TARGET_COUNT = 1
+
+# 3. 뉴스 요약 진행
+for i in range(TARGET_COUNT):
     article = feed.entries[i]
     title = article.title
     link = article.link
     
-    print(f"\n[{i+1}/5] Gemini 3.1 Flash-Lite가 번역/요약하는 중...")
+    print(f"\n[{i+1}/{TARGET_COUNT}] Gemini 3.1 Flash-Lite가 번역/요약하는 중...")
     prompt = f"다음 영어 기사 제목을 한국어로 깔끔하게 번역하고, 어떤 내용일지 간단히 3줄로 요약해줘.\n\n제목: {title}"
     
     max_retries = 3
@@ -43,7 +44,6 @@ for i in range(5):
             last_error = str(e)
             print(f"⚠️ 에러 발생 감지: {last_error}")
             
-            # 트래픽 초과(429) 에러 발생 시 대기 후 재시도
             if '429' in last_error or 'quota' in last_error.lower():
                 wait_time = 15 * (attempt + 1)
                 print(f"⏳ 서버 쿨다운을 위해 {wait_time}초 대기 후 재시도할게... ({attempt+1}/{max_retries})")
@@ -56,8 +56,8 @@ for i in range(5):
 
     final_message += f"*{i+1}. {title}*\n{summary}\n🔗 링크: {link}\n\n---------------------------\n\n"
     
-    # 💡 10초 대기로 분당 호출 제한(RPM) 방어
-    if i < 4:
+    # 마지막 기사가 아닐 때만 10초 대기 (1개일 때는 바로 패스)
+    if i < TARGET_COUNT - 1:
         print("⏳ 다음 기사로 넘어가기 전 10초 안전 대기...")
         time.sleep(10) 
 
