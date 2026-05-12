@@ -19,7 +19,8 @@ INTER_CATEGORY_SLEEP = 3  # 빠른 실행을 위해 대기 시간 단축
 RETRY_BASE_SLEEP     = 5                          
 MAX_RETRIES          = 3                          
 
-slack_url       = os.environ.get("SLACK_URL")
+slack_urls_env = os.environ.get("SLACK_URLS", "")
+slack_urls = [url.strip() for url in slack_urls_env.split(",") if url.strip()]
 gemini_api_key  = os.environ.get("GEMINI_API_KEY")
 
 genai.configure(api_key=gemini_api_key)
@@ -179,20 +180,20 @@ if total_summarized == 0:
 if len(final_message) > 39000:
     final_message = final_message[:39000] + "\n\n⚠️ 메시지가 너무 길어 일부가 잘렸습니다."
 
-print("\n🚀 슬랙 전송 시작...")
+print("\n🚀 슬랙 전송 시작...", flush=True)
 slack_data = {"text": final_message}
 
-# 💡 슬랙 전송 시에도 무한 대기 방지용 timeout 추가
-try:
-    res = requests.post(
-        slack_url,
-        headers={"Content-Type": "application/json"},
-        data=json.dumps(slack_data, ensure_ascii=False),
-        timeout=10
-    )
-    if res.status_code == 200:
-        print("✅ 슬랙 전송 완료!")
-    else:
-        print(f"❌ 슬랙 전송 실패: {res.status_code} / {res.text}")
-except Exception as e:
-    print(f"❌ 슬랙 서버 통신 에러: {e}")
+for url in slack_urls:
+    try:
+        res = requests.post(
+            url, 
+            headers={"Content-Type": "application/json"}, 
+            data=json.dumps(slack_data, ensure_ascii=False), 
+            timeout=10
+        )
+        if res.status_code == 200:
+            print(f"✅ 슬랙 전송 완료! (목적지: {url[-10:]})", flush=True)
+        else:
+            print(f"❌ 슬랙 전송 실패: {res.status_code}", flush=True)
+    except Exception as e:
+        print(f"❌ 슬랙 통신 에러: {e}", flush=True)
