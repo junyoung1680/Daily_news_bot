@@ -2,9 +2,10 @@ name: Daily News Bot
 
 on:
   schedule:
-    # 💡 9시 정각 전송을 위해, 깃허브 지연 시간을 고려해 8시 50분(KST) = 23시 50분(UTC)에 미리 실행
-    - cron: '50 23 * * *'
-  workflow_dispatch:
+    # 한국 시간(KST) 오전 8시 30분에 실행 (UTC 기준 전날 23:30)
+    # 8시 30분에 시작해서 수집하고 9시 정각에 슬랙을 쏘는 구조야.
+    - cron: '30 23 * * *'
+  workflow_dispatch: # 필요할 때 수동으로 돌릴 수 있는 버튼도 남겨두자.
 
 # 💡 봇이 깃허브에 history.json 파일을 저장할 수 있도록 쓰기 권한 부여
 permissions:
