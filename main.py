@@ -39,7 +39,6 @@ for display_category, search_keyword in categories.items():
     
     feed = feedparser.parse(rss_url)
     
-    # 💡 1. 24시간 이내의 최신 기사를 넉넉하게(최대 5개) 수집하여 AI에게 평가 후보로 제공
     recent_articles = []
     for article in feed.entries:
         if len(recent_articles) >= 5:
@@ -65,18 +64,16 @@ for display_category, search_keyword in categories.items():
         final_message += f"📌 [{display_category}]\n*최근 24시간 내 주요 동향 없음*\n\n"
         continue
 
-    # 💡 2. 후보 기사 목록을 텍스트로 변환
     articles_text = ""
     for idx, art in enumerate(recent_articles):
         articles_text += f"[{idx+1}] 제목: {art['title']}\n    링크: {art['link']}\n    발행일: {art['date']}\n\n"
 
-    # 💡 3. 핵심 로직: 섹션에 따라 AI에게 '선별 기준'을 다르게 부여
     if display_category in ["대출", "부동산"]:
         target_instruction = "이 섹션은 매우 중요합니다. 후보 기사 중 가장 파급력이 큰 3개의 기사를 반드시 선정하여 요약하세요. (후보가 3개 이하라면 모두 요약하세요.)"
     else:
-        target_instruction = "당신이 판단하기에 시장 파급력과 중요도가 높은 기사만 선별하세요. 1개에서 최대 3개까지만 골라서 요약하면 됩니다. (진짜 중요한 기사가 1개뿐이라면 1개만 요약해도 무방합니다.)"
+        target_instruction = "당신이 판단하기에 시장 파급력과 중요도가 높은 기사만 선별하세요. 1개에서 최대 3개까지만 골라서 요약하면 됩니다."
 
-    # 💡 4. 한 번의 프롬프트로 다수의 기사를 선별 및 요약 (가짜 링크 방지 지침 포함)
+    # 💡 [프롬프트 튜닝] 조사를 밖으로 빼고 가독성을 높이는 규칙 적용
     prompt = f"""
     당신은 금융, 부동산, 통신 산업 전문 수석 애널리스트입니다. 
     아래 [후보 기사 목록]을 읽고, 선별 기준에 따라 중요한 기사만 뽑아 사용자의 '뉴스 클리핑 양식'에 맞춰 요약하세요.
@@ -94,15 +91,18 @@ for display_category, search_keyword in categories.items():
     • 핵심단어: 사건의 핵심 내용 기술 → 파급효과나 향후 전망
     • 핵심단어: 주요 기업 동향이나 구체적인 데이터 기술 → 결과
     • 핵심단어: 시장 영향이나 소비자 변화 기술 → 결과
-    🔗 원문 링크: (반드시 후보 기사 목록에 있는 링크를 그대로 정확하게 복사해서 붙여넣으세요. 절대 가짜 링크를 생성하지 마세요.)
+    🔗 원문 링크: (반드시 후보 기사 목록에 있는 링크를 그대로 정확하게 복사하세요.)
 
     [세부 지침]
     1. 카테고리: 제공된 [{display_category}]를 그대로 대괄호 안에 넣으세요.
-    2. 제목: 원문 제목이 아닌 전체를 아우르는 통찰력 있는 제목을 짓고, 끝에 기사 발행일을 넣은 뒤 전체를 단일 별표(*)로 감싸 굵은 글씨로 만드세요.
-    3. 불릿(•) 시작: 각 문장은 '정책방향:', '시장반응:', '공급실적:' 처럼 2~4글자의 [핵심단어:] 로 시작하세요.
-    4. 🌟강조(가장 중요)🌟: 본문 내용 중 '중요한 주체(기업/기관명)'나 '핵심 숫자(금액/비율 등)'의 양끝에는 반드시 단일 별표(*)를 붙여 시각적으로 강조하세요.
+    2. 제목: 전체를 아우르는 통찰력 있는 제목을 짓고, 끝에 발행일을 넣은 뒤 전체를 단일 별표(*)로 감싸 굵은 글씨로 만드세요.
+    3. 불릿(•) 시작: 각 문장은 '정책방향:', '시장반응:', '공급실적:' 처럼 [핵심단어:] 로 시작하세요.
+    4. 🌟강조(가장 중요)🌟: 본문 내용 중 '중요한 주체'나 '핵심 숫자'를 단일 별표(*)로 강조하세요. 
+       [슬랙 굵은글씨 규칙]:
+       - 별표와 단어 사이에 절대 공백을 넣지 마세요. (오류: * 카카오 *, 정상: *카카오*)
+       - 조사(은/는/이/가/을/를 등)는 가독성을 위해 절대 별표 안에 넣지 말고 밖으로 빼서 쓰세요. 단, 별표와 띄어쓰기 없이 바로 붙여 써야 합니다. (예: *카카오뱅크*는 중저신용대출 누적 *1.1조원*을 공급)
     5. 화살표(→): 원인과 결과를 나타낼 때 화살표를 적극 사용하세요.
-    6. 기호 주의: 슬랙 굵은 글씨용 단일 별표(*), 불릿(•), 화살표(→) 외에 다른 마크다운 기호(#, **, - 등)는 절대 사용하지 마세요.
+    6. 기호 주의: 슬랙 굵은 글씨용 단일 별표(*), 불릿(•), 화살표(→) 외에 다른 마크다운 기호(#, ** 등)는 절대 사용하지 마세요.
     """
     
     max_retries = 3
@@ -124,17 +124,14 @@ for display_category, search_keyword in categories.items():
     final_message += f"{summary}\n\n"
     total_summarized += 1
     
-    # 카테고리당 1번만 호출하므로 시간 지연을 10초로 설정하여 안전성 확보
     time.sleep(10)
 
 if total_summarized == 0:
     final_message = "🤖 현재 새로운 산업/금융 뉴스가 없습니다."
 
-# 9시 발송 대기 타이머
 if now_kst.hour == 8:
     target_kst = now_kst.replace(hour=9, minute=0, second=0, microsecond=0)
     wait_seconds = (target_kst - now_kst).total_seconds()
-    print(f"⏳ 9시 정각 발송을 위해 {int(wait_seconds)}초 대기합니다...")
     time.sleep(wait_seconds)
 
 print("\n🚀 슬랙 전송 시작...")
