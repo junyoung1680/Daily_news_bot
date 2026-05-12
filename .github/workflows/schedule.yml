@@ -2,18 +2,23 @@ name: Daily News Bot
 
 on:
   schedule:
-    - cron: '0 0 * * *'
+    # 💡 9시 정각 전송을 위해, 깃허브 지연 시간을 고려해 8시 50분(KST) = 23시 50분(UTC)에 미리 실행
+    - cron: '50 23 * * *'
   workflow_dispatch:
+
+# 💡 봇이 깃허브에 history.json 파일을 저장할 수 있도록 쓰기 권한 부여
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4  # v3에서 v4로 업데이트 (경고 해결)
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5  # v4에서 v5로 업데이트 (경고 해결)
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
@@ -26,3 +31,12 @@ jobs:
           SLACK_URL: ${{ secrets.SLACK_URL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python main.py
+
+      # 💡 요약했던 기사 목록(history.json)을 깃허브 창고에 영구 저장
+      - name: Commit and push history
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add history.json
+          git commit -m "Update news history (Auto)" || echo "No changes to commit"
+          git push
