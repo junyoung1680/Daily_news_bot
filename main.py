@@ -222,4 +222,4 @@ res = requests.post(
 if res.status_code == 200:
     print("✅ 슬랙 전송 완료!")
 else:
-    print(f"❌ 슬랙 전송 실패: {res.status_code} / {res.text
+    print(f"❌ 슬랙 전송 실패: {res.status_code} / {res.text}")
