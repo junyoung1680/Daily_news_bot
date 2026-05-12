@@ -73,7 +73,6 @@ for display_category, search_keyword in categories.items():
     else:
         target_instruction = "당신이 판단하기에 시장 파급력과 중요도가 높은 기사만 선별하세요. 1개에서 최대 3개까지만 골라서 요약하면 됩니다."
 
-    # 💡 [프롬프트 대공사] AI에게 마크다운 생성을 맡기지 않고, 자체 태그([T], [B])만 생성하도록 지시
     prompt = f"""
     당신은 금융, 부동산, 통신 산업 전문 수석 애널리스트입니다. 
     아래 [후보 기사 목록]을 읽고, 선별 기준에 따라 중요한 기사만 뽑아 요약하세요.
@@ -106,18 +105,16 @@ for display_category, search_keyword in categories.items():
             summary = response.text.strip()
             
             if summary and "(분석 실패)" not in summary:
-                # 💡 [핵심 해결 로직] 파이썬 정규식을 이용해 태그를 완벽한 슬랙 마크다운으로 강제 변환
-                
                 # 1. 제목 변환: [T]제목[/T] -> *제목*
                 summary = re.sub(r'\[T\](.*?)\[/T\]', lambda m: f"*{m.group(1).strip()}*", summary)
                 
-                # 2. 강조+조사 변환: [B]단어[/B]조사 -> *단어* 조사 (단어 안에 공백이 있든 없든 싹 제거하고 강제 띄어쓰기)
-                summary = re.sub(r'\[B\](.*?)\[/B\]([가-힣]+)', lambda m: f"*{m.group(1).strip()}* {m.group(2)}", summary)
+                # 💡 2. 강조+조사 변환: [B]단어[/B]조사 -> *단어* + 초미세 공백(\u200A) + 조사
+                # 진짜 공백( ) 대신 초미세 공백을 삽입하여 슬랙을 속이면서 시각적으로는 붙어 보이게 만듦
+                summary = re.sub(r'\[B\](.*?)\[/B\]([가-힣]+)', lambda m: f"*{m.group(1).strip()}*\u200A{m.group(2)}", summary)
                 
                 # 3. 단독 강조 변환 (조사 없음): [B]단어[/B] -> *단어*
                 summary = re.sub(r'\[B\](.*?)\[/B\]', lambda m: f"*{m.group(1).strip()}*", summary)
                 
-                # AI가 실수로 쓴 일반 별표 잔재물 정리
                 summary = summary.replace('**', '*')
                 
             break 
