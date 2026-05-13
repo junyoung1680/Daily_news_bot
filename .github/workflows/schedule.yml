@@ -2,11 +2,11 @@ name: Daily News Bot
 
 on:
   schedule:
-    # 한국 시간(KST) 오전 8시 50분에 실행 (UTC 기준 전날 23:50)
-    # 파이썬 코드의 대기 시간을 없앴으므로, 8시 50분에 바로 수집을 시작해 약 2~5분 뒤 슬랙으로 전송합니다.
-    - cron: '50 23 * * *'
-  workflow_dispatch: # 필요할 때 수동으로 돌릴 수 있는 버튼도 남겨두자.
-
+    # KST 오전 8:00에 실행 (UTC 23:00). 
+    # 서버가 밀려서 8시 30분에 켜지더라도 9시 전에는 무조건 준비가 끝납니다.
+    - cron: '0 23 * * *'  
+  workflow_dispatch:
+  
 # 💡 봇이 깃허브에 history.json 파일을 저장할 수 있도록 쓰기 권한 부여
 permissions:
   contents: write
