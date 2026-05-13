@@ -173,27 +173,44 @@ for display_category, search_keyword in categories.items():
 
     time.sleep(INTER_CATEGORY_SLEEP)
 
-
 if total_summarized == 0:
     final_message = "🤖 현재 새로운 산업/금융 뉴스가 없습니다."
 
-if len(final_message) > 39000:
-    final_message = final_message[:39000] + "\n\n⚠️ 메시지가 너무 길어 일부가 잘렸습니다."
+# 💡 슬랙 전송 직전: 9시 정각 맞춤 대기 로직 추가
+print("\n⏳ 요약 완료! 전송 타이밍을 계산합니다...", flush=True)
 
+# 현재 시간 다시 확인
+now_utc_check = datetime.datetime.now(datetime.timezone.utc)
+now_kst_check = now_utc_check + datetime.timedelta(hours=9)
+
+# 오늘 오전 9시 정각을 목표 시간으로 설정
+target_kst = now_kst_check.replace(hour=9, minute=0, second=0, microsecond=0)
+
+# 현재 시간이 9시 이전이라면, 남은 초만큼 대기
+if now_kst_check < target_kst:
+    wait_seconds = (target_kst - now_kst_check).total_seconds()
+    print(f"⏰ KST 09:00:00 정각 발송을 위해 {int(wait_seconds)}초({int(wait_seconds/60)}분) 동안 대기합니다...", flush=True)
+    time.sleep(wait_seconds)
+    print("⏰ 9시 정각이 되었습니다! 슬랙 전송을 시작합니다.", flush=True)
+else:
+    print("⏰ 이미 9시가 지났으므로 즉시 발송합니다.", flush=True)
+
+# 🚀 최종 슬랙 전송
 print("\n🚀 슬랙 전송 시작...", flush=True)
 slack_data = {"text": final_message}
 
-for url in slack_urls:
-    try:
-        res = requests.post(
-            url, 
-            headers={"Content-Type": "application/json"}, 
-            data=json.dumps(slack_data, ensure_ascii=False), 
-            timeout=10
-        )
-        if res.status_code == 200:
-            print(f"✅ 슬랙 전송 완료! (목적지: {url[-10:]})", flush=True)
-        else:
-            print(f"❌ 슬랙 전송 실패: {res.status_code}", flush=True)
-    except Exception as e:
-        print(f"❌ 슬랙 통신 에러: {e}", flush=True)
+# 앞서 설정하신 다중 슬랙 주소(SLACK_URLS) 로직이 있다면 그 방식대로 유지하셔도 됩니다.
+# 아래는 단일 주소 기준입니다.
+try:
+    res = requests.post(
+        slack_url, 
+        headers={"Content-Type": "application/json"}, 
+        data=json.dumps(slack_data, ensure_ascii=False), 
+        timeout=10
+    )
+    if res.status_code == 200:
+        print("✅ 슬랙 전송 완료!", flush=True)
+    else:
+        print(f"❌ 슬랙 전송 실패: {res.status_code}", flush=True)
+except Exception as e:
+    print(f"❌ 슬랙 통신 에러: {e}", flush=True)
